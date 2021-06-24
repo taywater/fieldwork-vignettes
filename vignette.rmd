@@ -1,0 +1,188 @@
+---
+title: "Fieldwork App Vignette"
+author: "Nicholas Manna"
+date: "6/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction and Resources
+
+This document gives an overview of the back-end of the MARS Fieldwork Shiny app, and the reactive interactions between user-interface (UI), server, and different modules and tabs. I recommend perusing the following resources prior to digging into this document: 
+
+[Introduction tutorial](https://shiny.rstudio.com/tutorial/)
+
+[Fieldwork App GitHub Repo](https://github.com/taywater/shiny-fieldwork)
+
+[Modularization](https://shiny.rstudio.com/articles/modules.html)
+
+[PWD RStudio R blog – for RSConnect publishing](http://pwdrstudio/pwd-R-blog/public/)
+
+[Shinyjs – this one’s easy](https://deanattali.com/shinyjs/)
+
+[db Pool (easier than it seems)](https://shiny.rstudio.com/articles/pool-basics.html)
+
+[datatable (DT)](https://rstudio.github.io/DT/)
+
+[reactable](https://glin.github.io/reactable/)
+
+Each module contains a UI and a Server function. These functions are used in app.R. In app.R, settings are created, database connections are set, and universal variables are queried, including those that are used in selectInputs (like SMP IDs). Then, the files that contain modules are sourced, and app.R has it's own UI and server functions, as well as a `runApp` function. The UI and server functions from the modules are called here, and function arguments include the aforementioned universal variables, database connection, and other modules return values. 
+
+## Sections
+
+The Fieldwork App consists of several modules, all passing or receiving information from at least one other module. These interactions are shown in the web below; for example, the Special Investigations module sends information to the Deploy Sensor module, but does not receive information from any other modules. While the "Deploy Sensor" module is the Fieldwork App's visual hub, and the most involved section, the Collection Calendar is the landing page, and where routine interactions with the app often start. Special Investigations, SRT, Add Sensor, and Add Location modules often are important at the start of record keeping for a location or event. 
+
+![](module_web.png)
+
+### Collection Calendar
+
+The Collection Calendar UI function is shown below. In it, it's given a label, and a namespace (ns) is initiated. This namespace is unique to this module, so the same variable (ns) can be used in every module. It is necessary to wrap all input and output IDs in the function body in a call to ns(). TabPanels are in a list so that they can be worked with easier in app.R. The sidebarPanel separates the filters from the mainPanel's datatable. In the "choices" arguments of "property type", "All" is the value shown, but on the back-end, input$property_type = 0.5. 
+
+```{r eval = FALSE}
+
+collection_calendarUI <- function(id, label = "collection_calendar"){
+  #Collection Calendar ##
+  ns <- NS(id)
+  useShinyjs()
+  
+  #create a tabPanel for each tab
+  list(
+    tabPanel("Collection Calendar", value = "calendar_tab", 
+             #tags$style(HTML('table.dataTable tr.selected td, table.dataTable td.selected {background-color: pink !important;}')),
+             
+             titlePanel("Collection Calendar"), 
+             useShinyjs(), #this function needs to be called anywhere in the UI to use any other Shinyjs() functions
+             sidebarPanel(
+               selectInput(ns("property_type"), "Property Type", 
+                           choices = c("All" = .5, "Public" = 1, "Private" = 0)),
+               selectInput(ns("interval_filter"), "Interval", 
+                           choices = c("All" = 10, "5" = 5, "15" = 15)),
+               selectInput(ns("capacity_used"), "Capacity Used", 
+                           choices = c("All", "Less than 80%", "80% or more")), 
+               selectInput(ns("purpose_filter"), "Sensor Purpose", 
+                           choices = c("All" = 1.5, "BARO" = 1, "LEVEL" = 2, "DATALOGGER" = 3)),
+               selectInput(ns("term_filter"), "Term", 
+                           choices = c("All" = 1.5, "Short" = 1, "Long"  = 2, "SRT" = 3, "Special" = 4)),
+               selectInput(ns("research_filter"), "Research", 
+                           choices = c("All" = 1.5, "USEPA STAR" = 1))
+             ), 
+             mainPanel(
+               DTOutput(ns("collection"))
+             )
+    ), 
+    tabPanel("Future Deployments", value = "future_tab", 
+             
+             titlePanel("Future Deployments"), 
+                reactableOutput(ns("future")), 
+             downloadButton(ns("download_future"), "Download Future Deployments")
+    )
+  )
+  
+}
+
+```
+
+![](cc_still.png)
+
+#### What happens when you click a row? 
+
+Clicking a row in the collection calendar brings the user to the Deploy Sensor page, with the SMP ID and row selected. There are several steps that happen within the Collection Calendar server function to get there, and some that happen on the Deploy Sensor page. The Collection Calendar steps will be covered here. In this first chunk, notably, the function argument `selection` = "single". `formatStyle` and `styleInterval` are used to highlight cells when the date within the cell has passed. 
+
+```{r eval = FALSE}
+
+output$collection <- renderDT(
+        DT::datatable(
+          rv$collect_table(), 
+          selection = "single", 
+          style = 'bootstrap', 
+          class = 'table-responsive, table-hover', 
+          options = list(scroller = TRUE, 
+                         scrollX = TRUE, 
+                         scrollY = 550, 
+                         order = list(8, 'asc')), 
+          rownames = FALSE) %>%
+          formatStyle(
+            '80% Full Date',
+            backgroundColor = styleInterval(lubridate::today(), c('yellow', 'transparent')), 
+            color = 'black'
+          ) %>%
+          formatStyle(
+            '100% Full Date',
+            backgroundColor = styleInterval(lubridate::today(), c('red', 'transparent')),
+            color = styleInterval(lubridate::today(), c('white', 'black'))
+          ) %>% 
+          formatStyle(
+            'Prev. DL Error',
+            backgroundColor = styleEqual('Yes', 'yellow')
+          )
+      )
+
+```
+
+In this next chunk, a reactive value called `deploy_refresh` is initiated. When a row is selected, that value is updated, and the tab is updated. Within the deploy sensor tab, there is an argument called `collect`. The `return(list())` below contains values that are passed out of the collection calendar's server function. This list is passed to the deployment page via that argument `collect` , so that `selectInputs` can be updated and rows can be selected based on it. There is an `observeEvent` in Deploy Sensor for `collect$deploy_refresh`, so when that updates, it triggers the `updateSelectInput` and `selectRows` functions, which are given values like `collect$smp_id`. 
+
+```{r eval = FALSE}
+
+      rv$deploy_refresh <- 0
+      
+      #this is a two-step observeEvent
+      #when a line in the calendar is clicked, go toggle and update "smp_id_deploy", and switch tabs
+      observeEvent(input$collection_rows_selected, {
+        rv$deploy_refresh <- rv$deploy_refresh + 1
+        updateTabsetPanel(session = parent_session, "inTabset", selected = "deploy_tab")
+      })
+
+
+      return(
+        list(
+          sensor_serial = reactive(rv$collect_table_db$sensor_serial),
+          smp_id = reactive(rv$collect_table_filter()$smp_id[input$collection_rows_selected]),
+          site_name = reactive(rv$collect_table_filter()$site_name[input$collection_rows_selected]),
+          deploy_refresh = reactive(rv$deploy_refresh),
+          rows_selected = reactive(input$collection_rows_selected),
+          row = reactive(rv$collect_table_filter()$deployment_uid[input$collection_rows_selected]), 
+          future_smp_id = reactive(rv$future_table_db$smp_id[input$fd_selected]), 
+          future_site_name = reactive(rv$future_table_db$site_name[input$fd_selected]), 
+          future_deploy_refresh = reactive(rv$future_deploy_refresh), 
+          future_rows_selected = reactive(input$fd_selected), 
+          future_row = reactive(rv$future_table_db$future_deployment_uid[input$fd_selected])
+          )
+        )
+
+```
+
+In app.R, you can see the server function calls, and how they are passed to each other. Other argument include custom functions, database connections, lookup tables, or universal variables.  For example, values returned from the function `collection_calendarServer` are given to `collection_cal`. This is reactive, so the values are continuously passed. In `deployServer`, `collection_cal` is assigned to the argument `collect`. Therefore, the returned values listed above can be called with `collect$foo`. 
+
+```{r eval = FALSE}
+
+# 2.2: Server Module functions ---------------------------
+    # Collection Calendar
+    collection_cal <- collection_calendarServer("collection_calendar", parent_session = session,
+                                 ow = ow, deploy = deploy, poolConn = poolConn)
+    #Add Edit/Location
+    ow <- add_owServer("add_ow", parent_session = session, smp_id = smp_id, poolConn = poolConn, deploy = deploy)
+    #Add Edit/Sensor
+    sensor <- add_sensorServer("add_sensor", parent_session = session, poolConn = poolConn,
+                         sensor_status_lookup = sensor_status_lookup, deploy = deploy,
+                         sensor_issue_lookup = sensor_issue_lookup)
+    #Deploy Sensor
+    deploy <- deployServer("deploy", parent_session = session, ow = ow, collect = collection_cal,
+                         sensor = sensor, poolConn = poolConn, deployment_lookup = deployment_lookup,
+                         srt = srt, si = special_investigations, cwl_history = cwl_history, smp_id = smp_id, 
+                         sensor_issue_lookup = sensor_issue_lookup, newstyleEqual = newstyleEqual)
+    #SRT
+    srt <- SRTServer("srt", parent_session = session, poolConn = poolConn,
+                     srt_types = srt_types, con_phase = con_phase, sys_id = sys_id, special_char_replace = special_char_replace)
+    #Special Investigations
+    special_investigations<- special_investigationsServer("special_investigations", parent_session = session,
+                                        poolConn = poolConn, con_phase = con_phase, si_lookup = si_lookup,
+                                        requested_by_lookup = requested_by_lookup, sys_id = sys_id, special_char_replace = special_char_replace)
+    #History
+    cwl_history <- cwl_historyServer("history", parent_session = session, poolConn = poolConn, deploy = deploy)
+
+
+```
+
