@@ -89,7 +89,7 @@ collection_calendarUI <- function(id, label = "collection_calendar"){
 
 #### What happens when you click a row? 
 
-Clicking a row in the collection calendar brings the user to the Deploy Sensor page, with the SMP ID and row selected. There are several steps that happen within the Collection Calendar server function to get there, and some that happen on the Deploy Sensor page. The Collection Calendar steps will be covered here. In this first chunk, notably, the function argument `selection` = "single". `formatStyle` and `styleInterval` are used to highlight cells when the date within the cell has passed. 
+Clicking a row in the collection calendar brings the user to the Deploy Sensor page, with the SMP ID and row selected. There are several steps that happen within the Collection Calendar server function to get there, and some that happen on the Deploy Sensor page. In this first chunk, from the Collection Calendar server function, notably, the function argument `selection` = "single". `formatStyle` and `styleInterval` are used to highlight cells when the date within the cell has passed. 
 
 ```{r eval = FALSE}
 
@@ -186,3 +186,27 @@ In app.R, you can see the server function calls, and how they are passed to each
 
 ```
 
+Moving into the Deploy Sensor server function, the returned values from the collection calendar are in a list called `collect`. As noted, `collect$deploy_refresh` sets off certain updates in the `observeEvent`. Similar `observeEvent` functions exist in Deploy Sensor when coming from Special Investigation, SRT, Sensor, and Location modules. In Deploy Sensor, the SMP ID or Site Name is the foundational value. Tables and `selectInput` functions are based on the SMP ID or Site Name. So, they are first reset, and then a value is selected based on the `collect` list. Since `collect$deploy_refresh()` is initiated during the app load, the `observeEvent` will be triggered. That is why there is a length check; so it only follows through with this action if the SMP ID value actually exists. If it does, and then if the SMP ID is not blank, then it will be updated. If it is blank, the Site Name will be updated. Since those actions are not instant, a delay is placed before selecting a row in the accompanying datatable.  `collect$row` is the deployment_uid of the row selected in the collection calendar, and that is used to select the row in the deployment datatable. Selecting a row in the deployment datatable also pre-fills most sidebar fields for easy editing. More on that later. 
+
+```{r eval = FALSE}
+      #upon clicking a row in collection_calendar
+      observeEvent(collect$deploy_refresh(), {
+        updateSelectizeInput(session, "smp_id", selected = character(0))
+        updateSelectInput(session, "site_name", selected = "")
+        # need to get through the initial load where length == 0 for collection calendar smp_id (is.na does not work in that case)
+        # go to either smp id or site name
+        if(length(collect$smp_id()) > 0){
+          if(!is.na(collect$smp_id())){
+          updateSelectizeInput(session, "smp_id", choices = smp_id, selected = collect$smp_id(), server = TRUE)
+          }else{
+          updateSelectInput(session, "site_name", selected = collect$site_name())
+          }
+          #delay so that the selectizeInput is updated and table is queried before it is searched by R
+          delay(250,{
+                  rv$active_row <- reactive(which(rv$active_table_db()$deployment_uid == collect$row(), arr.ind = TRUE))
+                  dataTableProxy('current_deployment') %>% selectRows(rv$active_row())
+                })
+        }
+      })
+      
+```
