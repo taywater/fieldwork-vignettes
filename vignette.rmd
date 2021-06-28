@@ -82,9 +82,22 @@ collection_calendarUI <- function(id, label = "collection_calendar"){
 
 ### Step 2: Collection Calendar Server - Configure selectable output object
 
-Next, in Collection Calendar's server function, the datatable object `output$collection` is created with argument `selection = "single"`. This allows the user to select one row at a time; when the user does, the numeric index of the selected row is assigned to the reactive value`input$collection_rows_selected`.
+Next, in Collection Calendar's server function, a table is queried, then modified to contain desired fields, and desired rows based on the sidebar filters. Throughout the app, tables are queried with the suffix "_db". This version is kept, as it is the version that the app interacts with and reacts to changes. The "clean" displayable version lacks a suffix and reacts based on on "_db" version.  The datatable object `output$collection` receives `rv$collect_table` as an input., and is created with argument `selection = "single"`. This allows the user to select one row at a time; when the user does, the numeric index of the selected row is assigned to the reactive value `input$collection_rows_selected`.
 
 ```{r collection_server, eval=FALSE}
+
+#query the collection calendar and arrange by deployment_uid
+collect_query <- "select * from fieldwork.active_deployments"
+rv$collect_table_db<- odbc::dbGetQuery(poolConn, collect_query)
+
+...#content filtering elided for brevity 
+
+#select and rename columns to show in app
+rv$collect_table <- reactive(rv$collect_table_filter2() %>% 
+                               dplyr::select(smp_id, ow_suffix, project_name, type, term, previous_download_error,
+                                             deployment_dtime_est,date_80percent,date_100percent)  %>% 
+                               rename("SMP ID" = "smp_id") ...)
+                              #column renaming elided for brevity
 
 output$collection <- renderDT(
         DT::datatable(
@@ -187,13 +200,50 @@ At the conclusion of the previous step, the return values from Collection Calend
 
 ### Step 5: Deploy Server - Checking reactive inputs and updating Deploy's input variables
 
-Control flow then passes to Deploy's server function. The Deploy server function contains several `observeEvent` calls that check each of its module communication input variables (i.e. `collect` from Collection Calendar, `ow` from Add OW, etc) for the changes to the `deploy_refresh` value. If that value has changed, Deploy knows that the variable's source module was the one that passed control flow to Deploy, and, as such, has data for Deploy to read. Deploy reads this data and populates it into Deploy's input fields. The code block below contains Collection Calendar's corresponding `observeEvent`. 
+Control flow then passes to Deploy's server function. Deploy is initiated with three tables based on active, future, and previous deployments. These tables are invisible until an SMP ID or Site Name is selected, at which point they populate with the deployments at that site. The active deployment table query, through it's visual output, are shown in the chunk below. 
 
-Finally, it's time for Deploy to display the data. In Deploy, the SMP ID or Site Name is the foundational value. Tables and `selectInput` functions are based on the SMP ID or Site Name. They are first reset to purge any existing selections. Then, a value is selected from the `collect` list. The length check helps Deploy know whether the data it's reading has an SMP ID or Site Name as its foundation. This causes Deploy's corresponding datatable output object (not depicted here), to update based on the new foundational value. That is to say, now that Deploy knows which SMP/Site has been selected, it can populate its datatable with the deployments from that location.
+```{r eval = FALSE}
+
+      #query for active deployments
+      active_table_query <- reactive(if(nchar(input$smp_id) > 0){
+        paste0(
+        "SELECT * FROM fieldwork.active_deployments
+            WHERE smp_id = ", rv$smp_id(), " ORDER BY deployment_dtime_est")
+      }else{
+        paste0(
+          "SELECT * FROM fieldwork.active_deployments
+            WHERE site_name = '", input$site_name, "' ORDER BY deployment_dtime_est")
+      })
+      
+      #create table as a reactive value based on query
+      rv$active_table_db <- reactive(odbc::dbGetQuery(poolConn, active_table_query())%>% 
+                                       mutate(across("download_error", 
+                                                 ~ case_when(. == 1 ~ "Yes", 
+                                                                . == 0 ~ "No"))))
+      
+      #select columns to show in app, and rename
+      rv$active_table <- reactive(rv$active_table_db() %>% ...)
+      #visual modifications elided for brevity
+      
+      #render Datatable
+      output$current_deployment <- renderDT(
+        rv$active_table(),
+        selection = "single",
+        style = 'bootstrap', 
+        class = 'table-responsive, table-condensed',
+        options = list(dom = 'tp')
+      )
+      
+```
+
+The Deploy server function contains several `observeEvent` calls that check each of its module communication input variables (i.e. `collect` from Collection Calendar, `ow` from Add OW, etc) for the changes to the `deploy_refresh` value. If that value has changed, Deploy knows that the variable's source module was the one that passed control flow to Deploy, and, as such, has data for Deploy to read. Deploy reads this data and populates it into Deploy's input fields. The code block below contains Collection Calendar's corresponding `observeEvent`. 
+
+Finally, it's time for Deploy to display the data. In Deploy, the SMP ID or Site Name is the foundational value. Tables and `selectInput` functions are based on the SMP ID or Site Name. They are first reset to purge any existing selections. Then, a value is selected from the `collect` list. The length check helps Deploy know whether the data it's reading has an SMP ID or Site Name as its foundation. This causes Deploy's corresponding datatable output object (not depicted here), to update based on the new foundational value. That is to say, now that Deploy knows which SMP/Site has been selected, it can populate its datatable (process shown above) with the deployments from that location.
 
 Since that table update requires a filter operation, which takes time, a delay is used to allow that filter to complete before selecting a row in Deploy's datatable output. `collect$row` is the deployment_uid of the row selected in Collection Calendar, and that is used to select the row in Deploy's datatable. Selecting a row in the deployment datatable also pre-fills most sidebar fields for easy editing.
 
 ```{r eval = FALSE}
+
       #upon clicking a row in collection_calendar
       observeEvent(collect$deploy_refresh(), {
         updateSelectizeInput(session, "smp_id", selected = character(0))
@@ -207,6 +257,7 @@ Since that table update requires a filter operation, which takes time, a delay i
           updateSelectInput(session, "site_name", selected = collect$site_name())
           }
           #delay so that the selectizeInput is updated and table is queried before it is searched by R
+          #this is where the above chunk reaction is happening
           delay(250,{
                   rv$active_row <- reactive(which(rv$active_table_db()$deployment_uid == collect$row(), arr.ind = TRUE))
                   dataTableProxy('current_deployment') %>% selectRows(rv$active_row())
@@ -215,3 +266,45 @@ Since that table update requires a filter operation, which takes time, a delay i
       })
       
 ```
+
+### Step 6: Deploy Server - Updating Input Selections Based on Selected Row
+
+Selecting a row in the Active Deployments table indicates the need to either edit or access more information about that deployment. The future and previous deployments tables work similarly. Clicking a row in the collection calendar leads to this step, but users can also manually go to Deploy Sensor, select an SMP ID or Site Name, and select a row. 
+
+When a row is selected, that row's position within the datatable is identified, which is used to reference the row's position and related attributes in the "_db" table. Additionally, rows in other tables are deselected. Since these row selections are referenced so much, a shorthand was created. Then, a reactive value is updated based on the selected row. When this reactive value changes, an `updateSelectInput` is triggered with an `observe`. 
+
+```{r eval = FALSE}
+
+#when a row in active deployments table is clicked
+observeEvent(input$current_deployment_rows_selected, {
+  #deselect from other tables
+  dataTableProxy('prev_deployment') %>% selectRows(NULL)
+  dataTableProxy('future_deployment') %>% selectRows(NULL)
+})
+
+#shorten name of selected rows from active and prev deployments tables
+      rv$active <- reactive(input$current_deployment_rows_selected) 
+      rv$prev   <- reactive(input$prev_deployment_rows_selected)
+      rv$future <- reactive(input$future_deployment_rows_selected)
+      
+      #update sensor id 
+      #find which table has a row selected 
+      #then update reactive value definition based on that
+      rv$sensor_id <- reactive(if(length(rv$active()) > 0){
+        rv$active_table_db()$sensor_serial[rv$active()] 
+      }else if(length(rv$prev()) > 0){
+        rv$old_table_db()$sensor_serial[rv$prev()]
+      }else if(length(rv$future()) > 0){
+        rv$future_table_db()$sensor_serial[rv$future()]
+      })
+      
+      ...#more updates elided for brevity
+      
+      #update inputs based on the reactive value definitions above
+      observe({
+        updateSelectInput(session, "sensor_id", selected = rv$sensor_id())
+        ...# more updates elided for brevity
+      })
+
+```
+
