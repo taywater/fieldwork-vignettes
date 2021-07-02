@@ -10,32 +10,12 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```
 
-## Introduction and Resources
-
-This document gives an overview of the back-end of the MARS Fieldwork Shiny app, and the reactive interactions between user-interface (UI), server, and different modules and tabs. I recommend perusing the following resources prior to digging into this document: 
-
-[Introduction tutorial](https://shiny.rstudio.com/tutorial/)
-
-[Fieldwork App GitHub Repo](https://github.com/taywater/shiny-fieldwork)
-
-[Modularization](https://shiny.rstudio.com/articles/modules.html)
-
-[PWD RStudio R blog – for RSConnect publishing](http://pwdrstudio/pwd-R-blog/public/)
-
-[Shinyjs – this one’s easy](https://deanattali.com/shinyjs/)
-
-[db Pool (easier than it seems)](https://shiny.rstudio.com/articles/pool-basics.html)
-
-[datatable (DT)](https://rstudio.github.io/DT/)
-
-[reactable](https://glin.github.io/reactable/)
-
-Each module contains a UI and a Server function. These functions are used in app.R. In app.R, settings are created, database connections are set, and universal variables are queried, including those that are used in selectInputs (like SMP IDs). Then, the files that contain modules are sourced, and app.R has it's own UI and server functions, as well as a `runApp` function. The UI and server functions from the modules are called here, and function arguments include the aforementioned universal variables, database connection, and other modules' return values. 
 
 ## Modules of the Fieldwork App
 
-The Fieldwork App consists of several modules, all passing or receiving information from at least one other module. These interactions are shown in the web below; for example, the Special Investigations module sends information to the Deploy Sensor module, but does not receive information from any other modules. While the "Deploy" module is the Fieldwork App's visual hub, the "Collection Calendar" module is the landing page. Routine interactions with the app often start in Collection Calendar and go elsewhere.
+Each module contains a UI and a Server function. These functions are used in app.R. In app.R, settings are created, database connections are set, and universal variables are queried, including those that are used in selectInputs (like SMP IDs). Then, the files that contain modules are sourced, and app.R has it's own UI and server functions, as well as a `runApp` function. The UI and server functions from the modules are called here, and function arguments include the aforementioned universal variables, database connection, and other modules' return values. 
 
+The Fieldwork App consists of several modules, all passing or receiving information from at least one other module. These interactions are shown in the web below; for example, the Special Investigations module sends information to the Deploy Sensor module, but does not receive information from any other modules. While the "Deploy" module is the Fieldwork App's visual hub, the "Collection Calendar" module is the landing page. Routine interactions with the app often start in Collection Calendar and go elsewhere.
 
 ![](module_web.png)
 

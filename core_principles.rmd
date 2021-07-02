@@ -1,0 +1,252 @@
+---
+title: "Fieldwork App Core Principles"
+author: "Nicholas Manna"
+date: "7/1/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Introduction and Resources
+
+This document will cover recurring principles and themes in the Fieldwork App and related apps, such as Porous Pavement, Capture Efficiency, and Inlet Conveyance.
+It gives an overview of the back-end and the reactive interactions between user-interface (UI), server, and different modules and tabs. I recommend perusing the following resources before digging into this document: 
+
+[Introduction tutorial](https://shiny.rstudio.com/tutorial/)
+
+[Fieldwork App GitHub Repo](https://github.com/taywater/shiny-fieldwork)
+
+[Modularization](https://shiny.rstudio.com/articles/modules.html)
+
+[PWD RStudio R blog – for RSConnect publishing](http://pwdrstudio/pwd-R-blog/public/)
+
+[Shinyjs – this one’s easy](https://deanattali.com/shinyjs/)
+
+[db Pool (easier than it seems)](https://shiny.rstudio.com/articles/pool-basics.html)
+
+[datatable (DT)](https://rstudio.github.io/DT/)
+
+[reactable](https://glin.github.io/reactable/)
+
+### Core Principle #1: Modules 
+
+The Fieldwork App is built upon modules. These modules have a UI function and a server function, and are sourced and passed into app.R within the project folder for each app. Since modules are self-contained environments, variable names can be re-used between them. Breaking the app into modules also makes expansion, or separation, of the apps much easier since files can be added or removed with minimal adjustments in app.R. 
+
+Modules are sourced into app.R. The module's UI function is called within app.R's UI function, and the server function is called within app.R's server function. Global variables can be queried and set in the app.R UI function and passed to the module UI functions; same for server. These variables are initiated in the functions so they are checked every time the app is loaded. However, libraries, global options, database connections, and file sourcing can be set in the main body of app.R. 
+
+Modules need to have a namespace initiated by calling a function like `ns <- NS(id)`. Then each input or output name must be wrapped in `ns()` as it is initiated. Creating a server function within a module involves nesting the `moduleServer()` function within the initial function. `ns` must be called at the top of this `moduleServer()` function, shown below.
+
+```{r eval = FALSE}
+
+collection_calendarServer <- function(id, parent_session, ow, deploy, poolConn) {
+  
+  moduleServer(
+    id, 
+    function(input, output, session){
+      
+      #define ns to use in modals
+      ns <- session$ns
+      
+      rv <- reactiveValues()
+      
+      ...
+      #the rest of this server function has been elided for brevity
+    }
+  )
+}
+
+```
+
+Module server outputs can be assigned to a variable and passed to other modules as function arguments. This interconnectivity makes it possible for modules to work together and react to one another while being in separate files and environments.  
+
+``` {r eval = FALSE}
+
+# 2.2: Server Module functions ---------------------------
+    # Collection Calendar
+    collection_cal <- collection_calendarServer("collection_calendar", parent_session = session,
+                                 ow = ow, deploy = deploy, poolConn = poolConn)
+    #Add Edit/Location
+    ow <- add_owServer("add_ow", parent_session = session, smp_id = smp_id, poolConn = poolConn, deploy = deploy)
+
+```
+
+### Core Principle #2: Table Versions
+
+Tables are queried via a database connection. Within the database "mars_testing" there are three schemas: public, fieldwork, and performance. The fieldwork app interacts with data that lives in the fieldwork schema, so that is referenced in queries, such as `SELECT * FROM fieldwork.active_deployments`. Most tables that are displayed in the app come from views. These views are queries that include the base table (ie, deployment), joined with other tables, including lookup tables, so that all the values the user would want to see are already there. 
+
+A table is queried, and generally has the suffix `_db` appended. Then it will be passed through some `dplyr` processing, which may include formatting the date, and reducing and renaming columns, and the `_db` will be removed. This new table will be passed to DTOutputs for display. These steps are all reactive, so when an SMP ID changes, the query will update, then the `_db` table will update, and the displayed table will update. See the code chunk below.
+
+It's important to have two versions of the table. When a row is clicked, fields are pre-filled based on values from the `_db` table, because not all fields are shown in all tables, and certain values in the displayed table are the lookup description, when we want to enter the lookup UIDs. 
+
+When writing to the database, we write to the original base table, which updates the view on the database side, which the app queries. The app does not react to that, so we add a line to run the query again, which in turn refreshes the displayed table. 
+
+``` {r eval = FALSE}
+
+srt_table_query <- reactive(paste0("SELECT * FROM fieldwork.srt_full WHERE system_id = '", input$system_id, "'"))
+rv$srt_table_db <- reactive(odbc::dbGetQuery(poolConn, srt_table_query()))
+
+rv$srt_table <- reactive(rv$srt_table_db() %>% 
+                           mutate("test_date" = as.character(test_date), 
+                                  "srt_stormsize_in" = round(srt_stormsize_in, 2)) %>% 
+                           dplyr::select("system_id", "test_date", "phase", "type", "srt_volume_ft3", "dcia_ft2", "srt_stormsize_in", "srt_summary"))
+
+output$srt_table <- renderDT(
+        rv$srt_table(), 
+        selection = 'single',
+        style = 'bootstrap', 
+        class = 'table-responsive, table-hover', 
+        colnames = c('System ID', 'Test Date', 'Phase', 'Type', 'Volume (cf)', 'DCIA (sf)', 'Simulated Depth (in)', 'Results Summary') 
+      )
+
+```
+                                 
+### Core Principle #3: Main Tables, Site Tables, and Roots
+
+Each field operation covers multiple tabs. These tabs often include: Past (or for deployments, present, a.k.a. Collection Calendar), Future, and "Add/Edit" tabs. The "Add/Edit" tabs use the SMP ID, Site Name, or Work Number as the root for the page. When an SMP ID is selected, the page resets to center on that SMP. For deployments, this means limiting the locations to those available that SMP and show past, future, and active deployments at the SMP. For SRTs, selecting a System ID shows completed and future SRTs at the SMP. The user can only edit or write data to that SMP. 
+
+Similar to the SMP selection enabling features, the date field is another root that determines whether the field test is a future test or past test. This enables or disables certain fields; for example,  for an SRT, Test volume can only be entered once the date is entered (see code chunk below). Likewise, different fields are required depending on past or future; future tests require less information than completed tests (see lower part of code chunk below). 
+
+``` {r eval = FALSE}
+#toggle state for metadata depending on whether a test date is included
+observe(toggleState(id = "flow_data_rec", condition = length(input$srt_date) > 0))
+observe(toggleState(id = "water_level_rec", condition = length(input$srt_date) > 0))
+observe(toggleState(id = "photos_uploaded", condition = length(input$srt_date) > 0))
+observe(toggleState(id = "test_volume", condition = length(input$srt_date) > 0))
+...
+
+#toggle state (enable/disable) buttons based on whether system id, test date, and srt type are selected (this is shinyjs)
+observe(toggleState(id = "add_srt", condition = nchar(input$system_id) > 0 & length(input$srt_date) > 0 &
+                      nchar(input$srt_type) >0 & nchar(input$con_phase) > 0))
+
+#toggle state for future srt
+observe(toggleState(id = "future_srt", condition = nchar(input$system_id) > 0))
+
+```
+
+The main tables give an overview of all completed or future tests. Main tables are set following Core Principle #2, and given their own tab. The user can interact with these tables as they please, but clicking a row will switch tabs to the respective "Add/Edit" page, select an SMP, and select the row of the test, which pre-fills input fields (Core Principle #4). Since the main table and site tables are in the same module, much of this can be written within a single `observeEvent`.
+
+In the Core Principle #2 code chunk, you can see that `selection = "single"`. This enables reactions based on a row selection, and only allows one row to be selected at a time. The main table for SRT is a reactable and not a datatable, but has the same argument. First, system ID is selected for the "Add/Edit" tab based on row selection in the main table. Then, the tab switches, and future table is deselected. This is also a recurring trend; to make sure that there is no mix-up, only table of each field test can be selected at a time. Since these queries take time, a delay of 300ms is initiated. The row in the "Add/Edit" system table is selected where the srt_uid equals the srt_uid of the row selected in the main table.
+
+``` {r eval = FALSE}
+
+      #click a row in the all srt table, switch tabs, and select the correct SMP ID, then select the correct test
+      observeEvent(input$srt_selected, {
+        updateSelectizeInput(session, "system_id", choices = sys_id, 
+                             selected = rv$all_srt_table()$system_id[input$srt_selected], 
+                             server = TRUE)
+        updateTabsetPanel(session = parent_session, "inTabset", selected = "srt_tab")
+        #deselect future rows
+        updateReactable("all_future_srt_table", selected = NA)
+        #delay so that the selectizeInput is updated and table is quereied before it is searched by R
+        #basically make sure things happen in the right order
+        #delay time based on trail and error
+        delay(300,{
+                srt_row <- which(rv$srt_table_db()$srt_uid == rv$all_srt_table_db()$srt_uid[input$srt_selected], arr.ind = TRUE)
+                dataTableProxy('srt_table') %>% selectRows(srt_row)
+              }
+        )
+      })
+
+```
+
+When the database is updated, queries are re-run so they displayed tables also update. 
+
+### Core Principle #4: Editing and Prepopulating Inputs
+ 
+Selecting a row in a site table indicates the need to access more information or edit that row. When a row is selected, that row's position within the datatable is identified, which is used to reference the row's position and related attributes in the "_db" table. Additionally, rows in other tables are deselected.
+
+``` {r eval = FALSE}
+
+observeEvent(input$srt_table_rows_selected,{ 
+  dataTableProxy('future_srt_table') %>% selectRows(NULL)
+  updateDateInput(session, "srt_date", value = rv$srt_table()$test_date[input$srt_table_rows_selected])
+  
+  #update to values from selected row
+  updateSelectInput(session, "con_phase", selected = rv$srt_table()$phase[input$srt_table_rows_selected])
+  ...
+}
+
+
+```
+ 
+### Core Principle #5: Writing to and Editing the Database
+
+Adding rows to the database, and editing those rows, happens on a button click. Different buttons are available for future or completed tests (see CP #3), and different labels are applied based on whether a row is selected. A reactive value for the label, then applied within an `observe`. This conditional is also included within the `observeEvent` for the button click. 
+
+``` {r eval = FALSE}
+
+rv$label <- reactive(if(length(input$srt_table_rows_selected) == 0) "Add New" else "Edit Selected")
+observe(updateActionButton(session, "add_srt", label = rv$label()))
+
+rv$future_label <- reactive(if(length(input$future_srt_table_rows_selected) == 0) "Add Future SRT" else "Edit Selected Future SRT")
+observe(updateActionButton(session, "future_srt", label = rv$future_label()))
+
+```
+ 
+Reactive values often slightly modify and replace inputs so that quotes can be used differently. For instance, when writing to a database, a numeric or text value should be in single quotes, but when writing NULL, there should not be any quotes. Quotes can be set in the reactive value, rather than living inside the `paste()` in the query, where they are permenant and wrap the NA or NULL incorrectly. This also ensures that the blank value for these inputs is always NULL. 
+
+``` {r eval = FALSE} 
+
+rv$test_volume <- reactive(if(is.na(input$test_volume)) "NULL" else paste0("'", input$test_volume, "'"))
+
+```
+
+Once the "Add/Edit" button is clicked, the conditional is considered to see whether or not the row is being added or edited. If editing, use an `INSERT INTO` query, which includes the aforemented reactive values for any input that might be NULL. If editing, use an `UPDATE` query, where srt_uid equals that of the row selected. Since future tests can be selected and edited to be completed tests, check for that and delete the future test. Then, update all affected tables, and clear contents, aside from the root (SMP ID, System ID, Site Name, etc.)
+
+``` {r eval = FALSE}
+
+observeEvent(input$add_srt, {
+        if(length(input$srt_table_rows_selected) == 0){
+          add_srt_query <- paste0("INSERT INTO fieldwork.srt (system_id, test_date, 
+                          con_phase_lookup_uid, srt_type_lookup_uid, 
+                          srt_volume_ft3, dcia_ft2, srt_stormsize_in, srt_summary) 
+      	                  VALUES ('", input$system_id, "','", input$srt_date, "','", rv$phase(), "', ", 
+                                  rv$type(), ",", rv$test_volume(), ",", 
+                                  rv$dcia_write(), ", ", rv$storm_size(), ",", rv$srt_summary(), ")")
+          ...#other queries and content elided for brevity
+          odbc::dbGetQuery(poolConn, add_srt_query)
+          
+        }else{
+          edit_srt_query <- paste0(
+            "UPDATE fieldwork.srt SET system_id = '", input$system_id, "', test_date = '", input$srt_date, 
+            "', con_phase_lookup_uid = '", rv$phase(),
+            "', srt_type_lookup_uid = '",  rv$type(),
+            "', srt_volume_ft3 = ", rv$test_volume(),
+            ", dcia_ft2 = " , rv$dcia_write(),
+            ", srt_stormsize_in = ", rv$storm_size(), 
+            ", srt_summary = ", rv$srt_summary(), "
+            WHERE srt_uid = '", rv$srt_table_db()[input$srt_table_rows_selected, 1], "'")
+          ...
+          dbGetQuery(poolConn, edit_srt_query)
+        }
+          
+          #if editing a future test to become a completed test, delete the future test
+         if(length(input$future_srt_table_rows_selected) > 0){
+          odbc::dbGetQuery(poolConn, paste0("DELETE FROM fieldwork.future_srt 
+                                            WHERE future_srt_uid = '", rv$future_srt_table_db()[input$future_srt_table_rows_selected, 1], "'"))
+         }
+          
+          #update srt_table with new srt
+        rv$srt_table_db <- reactive(odbc::dbGetQuery(poolConn, srt_table_query()))
+        
+        #update srt view with new/edited srt
+        rv$all_srt_table_db <- reactive(dbGetQuery(poolConn, all_srt_table_query))
+        
+        #update future srt table in case a future srt was delisted 
+        rv$future_srt_table_db <- reactive(odbc::dbGetQuery(poolConn, future_srt_table_query()))
+        rv$all_future_srt_table_db <- odbc::dbGetQuery(poolConn, all_future_srt_table_query)
+          
+        ...
+        
+        #clear contents aside from System ID
+        reset("srt_date")
+        reset("con_phase")
+        reset("srt_type")
+        ...
+}
+          
+
+```
+
