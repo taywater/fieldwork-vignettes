@@ -10,7 +10,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```
 
-
 ## Modules of the Fieldwork App
 
 Each module contains a UI and a Server function. These functions are used in the app's main source file, app.R. In app.R, settings are created, database connections are set, and universal variables are queried (for example, the app.R server function maintains a global list of SMP IDs available to every module). Then, the files that contain modules are sourced, app.R's UI and server functions are instantiated, and a `runApp` function is called. The UI and server functions from the modules are called within app.R's global UI and server functions; the module functions' arguments include the aforementioned universal variables, database connection, and other modules' return values. 

@@ -153,7 +153,7 @@ In the Core Principle #2 code chunk, you can see that `selection = "single"`. Th
 
 When the database is updated, queries are re-run so they displayed tables also update. 
 
-### Core Principle #4: Editing and Prepopulating Inputs
+### Core Principle #4: Editing and Pre-populating Inputs
  
 Selecting a row in a site table indicates the need to access more information or edit that row. When a row is selected, that row's position within the datatable is identified, which is used to reference the row's position and related attributes in the "_db" table. Additionally, rows in other tables are deselected.
 
