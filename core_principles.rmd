@@ -32,11 +32,15 @@ It gives an overview of the back-end and the reactive interactions between user-
 
 ### Core Principle #1: Modules 
 
-The Fieldwork App is built upon modules. These modules have a UI function and a server function, and are sourced and passed into app.R within the project folder for each app. Since modules are self-contained environments, variable names can be re-used between them. Breaking the app into modules also makes expansion, or separation, of the apps much easier since files can be added or removed with minimal adjustments in app.R. 
+The Fieldwork App is composed of modules. The modules represent individual pages or components of the overarching app. App.R brings these components of the app together; calls to `source()` bring the UI and server functions of each constituent module into app.R to be executed. Modules provide a host of benefits for the app's development process. Since modules are self-contained environments, variable names can be re-used between them. Breaking the app into modules also makes expansion, or separation, of the apps much easier since files can be added or removed with minimal adjustments in app.R. 
 
-Modules are sourced into app.R. The module's UI function is called within app.R's UI function, and the server function is called within app.R's server function. Global variables can be queried and set in the app.R UI function and passed to the module UI functions; same for server. These variables are initiated in the functions so they are checked every time the app is loaded. However, libraries, global options, database connections, and file sourcing can be set in the main body of app.R. 
+When modules' source files are brought into app.R, the module functions get called. The modules' UI functions are called within app.R's UI function; likewise their server functions are called within app.R's server function. Global variables can be queried and set in the app.R UI and server functions and passed to modules called there. 
 
-Modules need to have a namespace initiated by calling a function like `ns <- NS(id)`. Then each input or output name must be wrapped in `ns()` as it is initiated. Creating a server function within a module involves nesting the `moduleServer()` function within the initial function. `ns` must be called at the top of this `moduleServer()` function, shown below.
+%%%Taylor: These two sentences are unclear - it sounds like there is a difference between the way the app treats globals that are instantiated in the global UI/Server and those instantiated in App.R but not inside those functions. Can you elaborate more on how it treats them differently, perhaps with examples?%%%
+
+These variables are initiated in the functions so they are checked every time the app is loaded. However, libraries, global options, database connections, and file sourcing can be set in the main body of app.R. 
+
+Modules are given distinct namespaces to facilitate the reusability of variable names. These namespaces are created with the function `NS()`, which returns a function that silently modifies variable names within the Shiny environment. The function is instantiated like `ns <- NS(id)`, where `id` is the name of your module. Each input or output for that module must be wrapped in `ns()` to appropriately assign it to the namespace. Creating a module's server function involves calling `moduleServer()`, and `ns` must be called within `moduleServer()`. `moduleServer()` and `ns` work in concert to define and name the environment for the module's code execution.
 
 ```{r eval = FALSE}
 
@@ -59,7 +63,7 @@ collection_calendarServer <- function(id, parent_session, ow, deploy, poolConn) 
 
 ```
 
-Module server outputs can be assigned to a variable and passed to other modules as function arguments. This interconnectivity makes it possible for modules to work together and react to one another while being in separate files and environments.  
+Module server functions return outputs that can be passed to other modules as input arguments. This allows modules to communicate with one another, and react to events in modules to which they're connected. This interconnectivity makes it possible for modules to pass control of the application to one another. Fieldwork app modules extensively link to one another in this way. In the example below, module server functions define their outputs and inputs in App.R's server function, allowing for inter-module communication.
 
 ``` {r eval = FALSE}
 
@@ -74,9 +78,9 @@ Module server outputs can be assigned to a variable and passed to other modules 
 
 ### Core Principle #2: Table Versions
 
-Tables are queried via a database connection. Within the database "mars_testing" there are three schemas: public, fieldwork, and performance. The fieldwork app interacts with data that lives in the fieldwork schema, so that is referenced in queries, such as `SELECT * FROM fieldwork.active_deployments`. Most tables that are displayed in the app come from views. These views are queries that include the base table (ie, deployment), joined with other tables, including lookup tables, so that all the values the user would want to see are already there. 
+Tables are queried via a database connection instantiated in App.R. Within the database "mars_testing" there are three schemas: public, fieldwork, and performance. The fieldwork app interacts with data hosted in the fieldwork schema, so `fieldwork.` is often prepended to table names in database queries (`SELECT * FROM fieldwork.active_deployments`). Most tables that are displayed in the app come from views. These views include the base table (ie, deployment), joined with other tables, including lookup tables, so that all the values the user would want to see are already there. 
 
-A table is queried, and generally has the suffix `_db` appended. Then it will be passed through some `dplyr` processing, which may include formatting the date, and reducing and renaming columns, and the `_db` will be removed. This new table will be passed to DTOutputs for display. These steps are all reactive, so when an SMP ID changes, the query will update, then the `_db` table will update, and the displayed table will update. See the code chunk below.
+Tables in the fieldwork app follow a naming convention that describes where the data has come from. Tables directly queried from the databse will have the suffix `_db` appended. When that table is passed through some `dplyr` processing, which may include formatting the date, and reducing and renaming columns, the `_db` will be removed. This new table will be passed to DTOutputs for display. These steps are all reactive, so when an SMP ID changes, the query will update, then the `_db` table will update, the `dplyr` processing will re-run, and the displayed table will update. See the code chunk below.
 
 It's important to have two versions of the table. When a row is clicked, fields are pre-filled based on values from the `_db` table, because not all fields are shown in all tables, and certain values in the displayed table are the lookup description, when we want to enter the lookup UIDs. 
 
@@ -103,6 +107,8 @@ output$srt_table <- renderDT(
 ```
                                  
 ### Core Principle #3: Main Tables, Site Tables, and Roots
+
+%%%Taylor: This section is extremely dense. You're describing how modules work from a root value that controls the capabilities/actions of the app depending on the context, but you're not leading with that. I think this would work better as the final core principle, as it draws on anumber of others. I will take a stab at writing a stripped-down version of this as a new, final principle.%%%
 
 Each field operation covers multiple tabs. These tabs often include: Past (or for deployments, present, a.k.a. Collection Calendar), Future, and "Add/Edit" tabs. The "Add/Edit" tabs use the SMP ID, Site Name, or Work Number as the root for the page. When an SMP ID is selected, the page resets to center on that SMP. For deployments, this means limiting the locations to those available that SMP and show past, future, and active deployments at the SMP. For SRTs, selecting a System ID shows completed and future SRTs at the SMP. The user can only edit or write data to that SMP. 
 
@@ -155,7 +161,9 @@ When the database is updated, queries are re-run so they displayed tables also u
 
 ### Core Principle #4: Editing and Pre-populating Inputs
  
-Selecting a row in a site table indicates the need to access more information or edit that row. When a row is selected, that row's position within the datatable is identified, which is used to reference the row's position and related attributes in the "_db" table. Additionally, rows in other tables are deselected.
+Selecting a row in a site table indicates the need to access more information or edit that row. The Fieldwork App will respond to this indication by modifying the app UI in response to that user's action. When a row is selected, that row's position within the datatable is identified, which is used to reference the row's position and related attributes in the "_db" table. Additionally, rows in other tables are deselected.
+
+Attributes from the selected row (here, `srt_table()$phase`) are then sent into a corresponding UI object (here, the `con_phase` selectInput UI object). Shiny refreshes the UI for the user, and the new value is in place.
 
 ``` {r eval = FALSE}
 
@@ -173,7 +181,7 @@ observeEvent(input$srt_table_rows_selected,{
  
 ### Core Principle #5: Writing to and Editing the Database
 
-Adding rows to the database, and editing those rows, happens on a button click. Different buttons are available for future or completed tests (see CP #3), and different labels are applied based on whether a row is selected. A reactive value for the label, then applied within an `observe`. This conditional is also included within the `observeEvent` for the button click. 
+Adding rows to the database, and editing those rows, is triggered by a button click. Different buttons are available for future or completed tests (see CP #3), and different labels are applied based on whether a row is selected. A reactive value for the label is then applied within an `observe`. This conditional is also included within the `observeEvent` for the button click. 
 
 ``` {r eval = FALSE}
 
@@ -185,7 +193,7 @@ observe(updateActionButton(session, "future_srt", label = rv$future_label()))
 
 ```
  
-Reactive values often slightly modify and replace inputs so that quotes can be used differently. For instance, when writing to a database, a numeric or text value should be in single quotes, but when writing NULL, there should not be any quotes. Quotes can be set in the reactive value, rather than living inside the `paste()` in the query, where they are permenant and wrap the NA or NULL incorrectly. This also ensures that the blank value for these inputs is always NULL. 
+The Fieldwork App often uses reactive values to manage quotation marks for input strings that will be sent to the database. For instance, when writing to a database, a numeric or text value should be in single quotes, but when writing NULL, there should not be any quotes. Quotes can be set in the reactive value, rather than living inside the `paste()` in the query, where they are permanent and wrap the NA or NULL incorrectly. This also ensures that the blank value for these inputs is always NULL. 
 
 ``` {r eval = FALSE} 
 
@@ -193,7 +201,9 @@ rv$test_volume <- reactive(if(is.na(input$test_volume)) "NULL" else paste0("'", 
 
 ```
 
-Once the "Add/Edit" button is clicked, the conditional is considered to see whether or not the row is being added or edited. If editing, use an `INSERT INTO` query, which includes the aforemented reactive values for any input that might be NULL. If editing, use an `UPDATE` query, where srt_uid equals that of the row selected. Since future tests can be selected and edited to be completed tests, check for that and delete the future test. Then, update all affected tables, and clear contents, aside from the root (SMP ID, System ID, Site Name, etc.)
+The following is an example of modal inputs influencing the Fieldwork App's behavior when writing to the database. An SRT is added, or edited, and various choices are made to prepare the inputs to be written depending on the scenario.
+
+Once the "Add/Edit" button is clicked, the conditional is considered to see whether the row is being added or edited. If adding, the app uses an `INSERT INTO` query, which includes the aforementioned reactive values for any input that might be NULL. If editing, the app uses an `UPDATE` query, where srt_uid equals that of the row selected. Since future tests can be selected and edited to be completed tests, check for that and delete the future test. Then, update all affected tables, and clear contents, aside from the root (SMP ID, System ID, Site Name, etc.)
 
 ``` {r eval = FALSE}
 
