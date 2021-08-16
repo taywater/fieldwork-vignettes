@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Introduction
 
-The Porous Pavement app has evolved from a place of record-keeping and entry to the central hub for porous pavement records, results, and preliminary evaluation. User can input future tests, and once the test is complete, edit the record to be a completed tests with results, including guided calculations. Users can also view and download aggregated data. 
+The Porous Pavement app has evolved from a place of record-keeping and entry to the central hub for porous pavement records, results, and preliminary evaluation. The user can input future tests and, once the test is complete, edit the record to be a completed test with results, including guided calculations. Users can also view and download aggregated data. 
 
 The steps enumerated below will reference Core Principles from the Core Principles vignette. This vignette goes into greater detail on these principles. 
 
@@ -36,26 +36,21 @@ sidebarPanel(selectizeInput(ns("smp_id"), future_req(html_req("SMP ID")), choice
                                                   )), 
                                    ...
                                    #other inputs elided for brevity
-                                   fluidRow(
-                                   column(6, selectInput(ns("ring_dia"), "Ring Diameter (in)", choices = c("","9.75", "11.625"), selected = NULL)),
-                                   column(6, numericInput(ns("prewet_time"), "Prewet Time (sec)", value = NA, min = 0))
-                                   ), 
-                                   conditionalPanel(condition = "input.prewet_time > 599", 
-                                                    ns = ns, 
-                                                    disabled(numericInput(ns("pw_rate"), "Rate (in/hr) based on Prewet Time", value = NA, min = 0))),
-                                   conditionalPanel(condition = "input.prewet_time < 599", 
-                                                   ns = ns, 
-                                                   selectInput(ns("weight"), "Mass of Water (lb)",
-                                                                        choices = c("", 8.34, 41.7), selected = NULL),
-                                                   fluidRow(
-                                                     column(6, numericInput(ns("time_one"), "T1 Time (sec)", value = NA, min = 0)),
-                                                     column(6, disabled(numericInput(ns("rate_one"), "T1 Rate (in/hr)", value = NA, min = 0)))
-                                                     ),
-                                                   fluidRow(
-                                                     column(6, numericInput(ns("time_two"), "T2 Time (sec)", value = NA, min = 0)),
-                                                     column(6, disabled(numericInput(ns("rate_two"), "T2 Rate (in/hr)", value = NA, min = 0)))
-                                                   )
-                                                   ),
+  fluidRow(column(6, selectInput(ns("ring_dia"), "Ring Diameter (in)", 
+                                 choices = c("","9.75", "11.625"), selected = NULL)),
+           column(6, numericInput(ns("prewet_time"), "Prewet Time (sec)", value = NA, min = 0))), 
+  conditionalPanel(condition = "input.prewet_time > 599", ns = ns, 
+                   disabled(numericInput(ns("pw_rate"), "Rate (in/hr) based on Prewet Time", 
+                                         value = NA, min = 0))),
+  conditionalPanel(condition = "input.prewet_time < 599", ns = ns, 
+                   selectInput(ns("weight"), "Mass of Water (lb)", 
+                               choices = c("", 8.34, 41.7), selected = NULL),
+                    fluidRow(column(6, numericInput(ns("time_one"), "T1 Time (sec)", value = NA, min = 0)),
+                             column(6, disabled(numericInput(ns("rate_one"), "T1 Rate (in/hr)", 
+                                                             value = NA, min = 0)))),
+                    fluidRow(column(6, numericInput(ns("time_two"), "T2 Time (sec)", value = NA, min = 0)),
+                             column(6, disabled(numericInput(ns("rate_two"), "T2 Rate (in/hr)", 
+                                                             value = NA, min = 0))))),
                                    ...
 )
 
