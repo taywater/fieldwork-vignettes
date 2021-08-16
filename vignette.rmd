@@ -1,73 +1,45 @@
 ---
 title: "Fieldwork App Vignette"
-author: "Nicholas Manna"
-date: "6/23/2021"
+author: "Nicholas Manna and Taylor Heffernan"
+date: "7/06/2021"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
 ```
 
-## Introduction and Resources
+## Modules of the Fieldwork App
 
-This document gives an overview of the back-end of the MARS Fieldwork Shiny app, and the reactive interactions between user-interface (UI), server, and different modules and tabs. I recommend perusing the following resources prior to digging into this document: 
+Each module contains a UI and a Server function. These functions are used in the app's main source file, app.R. In app.R, settings are created, database connections are set, and universal variables are queried (for example, the app.R server function maintains a global list of SMP IDs available to every module). Then, the files that contain modules are sourced, app.R's UI and server functions are instantiated, and a `runApp` function is called. The UI and server functions from the modules are called within app.R's global UI and server functions; the module functions' arguments include the aforementioned universal variables, database connection, and other modules' return values. 
 
-[Introduction tutorial](https://shiny.rstudio.com/tutorial/)
-
-[Fieldwork App GitHub Repo](https://github.com/taywater/shiny-fieldwork)
-
-[Modularization](https://shiny.rstudio.com/articles/modules.html)
-
-[PWD RStudio R blog – for RSConnect publishing](http://pwdrstudio/pwd-R-blog/public/)
-
-[Shinyjs – this one’s easy](https://deanattali.com/shinyjs/)
-
-[db Pool (easier than it seems)](https://shiny.rstudio.com/articles/pool-basics.html)
-
-[datatable (DT)](https://rstudio.github.io/DT/)
-
-[reactable](https://glin.github.io/reactable/)
-
-Each module contains a UI and a Server function. These functions are used in app.R. In app.R, settings are created, database connections are set, and universal variables are queried, including those that are used in selectInputs (like SMP IDs). Then, the files that contain modules are sourced, and app.R has it's own UI and server functions, as well as a `runApp` function. The UI and server functions from the modules are called here, and function arguments include the aforementioned universal variables, database connection, and other modules return values. 
-
-## Sections
-
-The Fieldwork App consists of several modules, all passing or receiving information from at least one other module. These interactions are shown in the web below; for example, the Special Investigations module sends information to the Deploy Sensor module, but does not receive information from any other modules. While the "Deploy Sensor" module is the Fieldwork App's visual hub, and the most involved section, the Collection Calendar is the landing page, and where routine interactions with the app often start. Special Investigations, SRT, Add Sensor, and Add Location modules often are important at the start of record keeping for a location or event. 
+The Fieldwork App's modules all pass or receive information from at least one other module. These interactions are shown in the web below; for example, the Special Investigations module sends information to the Deploy Sensor module, but does not receive information from any other modules. While the "Deploy" module is the Fieldwork App's visual hub, the "Collection Calendar" module is the landing page. Routine interactions with the app often start in Collection Calendar and go elsewhere.
 
 ![](module_web.png)
 
-### Collection Calendar
+Collection Calendar contains a table view with relevant info for the fieldwork team. Clicking a row in this table view sends the user to Deploy, with the deployment info from that row pre-populated in the Deploy UI. There are several steps that happen within Collection Calendar's server function to get there, and some that happen in Deploy's server function. We will examine these steps one at a time.
 
-The Collection Calendar UI function is shown below. In it, it's given a label, and a namespace (ns) is initiated. This namespace is unique to this module, so the same variable (ns) can be used in every module. It is necessary to wrap all input and output IDs in the function body in a call to ns(). TabPanels are in a list so that they can be worked with easier in app.R. The sidebarPanel separates the filters from the mainPanel's datatable. In the "choices" arguments of "property type", "All" is the value shown, but on the back-end, input$property_type = 0.5. 
+### Step 1: Collection Calendar UI - Create selectable output object
 
-```{r eval = FALSE}
+Collection Calendar's UI function is shown below. TabPanels are in a list so that they can be worked with more easily in app.R. The sidebarPanel separates the input controls from the mainPanel's datatable. The `DTOutput` function creates a reactive output variable, here named `collection`. It also creates an input variable, by default named `tableID`_rows_selected (e.g., `collection_rows_selected` here).
+
+
+```{r collection_UI, eval = FALSE}
 
 collection_calendarUI <- function(id, label = "collection_calendar"){
-  #Collection Calendar ##
   ns <- NS(id)
   useShinyjs()
   
   #create a tabPanel for each tab
   list(
     tabPanel("Collection Calendar", value = "calendar_tab", 
-             #tags$style(HTML('table.dataTable tr.selected td, table.dataTable td.selected {background-color: pink !important;}')),
-             
              titlePanel("Collection Calendar"), 
-             useShinyjs(), #this function needs to be called anywhere in the UI to use any other Shinyjs() functions
+             useShinyjs(), #this needs to be called anywhere in the UI to use other Shinyjs() functions
              sidebarPanel(
                selectInput(ns("property_type"), "Property Type", 
                            choices = c("All" = .5, "Public" = 1, "Private" = 0)),
-               selectInput(ns("interval_filter"), "Interval", 
-                           choices = c("All" = 10, "5" = 5, "15" = 15)),
-               selectInput(ns("capacity_used"), "Capacity Used", 
-                           choices = c("All", "Less than 80%", "80% or more")), 
-               selectInput(ns("purpose_filter"), "Sensor Purpose", 
-                           choices = c("All" = 1.5, "BARO" = 1, "LEVEL" = 2, "DATALOGGER" = 3)),
-               selectInput(ns("term_filter"), "Term", 
-                           choices = c("All" = 1.5, "Short" = 1, "Long"  = 2, "SRT" = 3, "Special" = 4)),
-               selectInput(ns("research_filter"), "Research", 
-                           choices = c("All" = 1.5, "USEPA STAR" = 1))
+               ... #Several more selectInputs elided for brevity
              ), 
              mainPanel(
                DTOutput(ns("collection"))
@@ -87,11 +59,28 @@ collection_calendarUI <- function(id, label = "collection_calendar"){
 
 ![](cc_still.png)
 
-#### What happens when you click a row? 
+### Step 2: Collection Calendar Server - Configure selectable output object
 
-Clicking a row in the collection calendar brings the user to the Deploy Sensor page, with the SMP ID and row selected. There are several steps that happen within the Collection Calendar server function to get there, and some that happen on the Deploy Sensor page. In this first chunk, from the Collection Calendar server function, notably, the function argument `selection` = "single". `formatStyle` and `styleInterval` are used to highlight cells when the date within the cell has passed. 
+Next, in Collection Calendar's server function, a table is queried, then modified to contain desired fields and rows based on the sidebar filters. This table forms the basis of the table view shown in Collection Calendar's right hand side.
 
-```{r eval = FALSE}
+Throughout the app, tables are queried and stored in variables with the suffix "_db". This version is stored alongside a "clean" version, that has fields renamed for display in the app UI. Both table objects are reactive variables. The clean, displayable, version lacks a suffix and reacts based on the "_db" version.  In Collection Calendar, the table as-queried from the DB is stored in `rv$collect_table_db`. The clean version is stored in `rv$collect_table`. 
+
+The latter is assigned to the datatable output object `output$collection` with the argument `selection = "single"`. This allows the user to select one row at a time in the output object; when the user does, the numeric index of the selected row is assigned to the reactive value `input$collection_rows_selected`.
+
+```{r collection_server, eval=FALSE}
+
+#query the collection calendar and arrange by deployment_uid
+collect_query <- "select * from fieldwork.active_deployments"
+rv$collect_table_db<- odbc::dbGetQuery(poolConn, collect_query)
+
+...#content filtering elided for brevity 
+
+#select and rename columns to show in app
+rv$collect_table <- reactive(rv$collect_table_filter2() %>% 
+                            dplyr::select(smp_id, ow_suffix, project_name, type, term, previous_download_error,
+                                             deployment_dtime_est,date_80percent,date_100percent)  %>% 
+                               rename("SMP ID" = "smp_id") ...)
+                              #column renaming elided for brevity
 
 output$collection <- renderDT(
         DT::datatable(
@@ -109,22 +98,24 @@ output$collection <- renderDT(
             backgroundColor = styleInterval(lubridate::today(), c('yellow', 'transparent')), 
             color = 'black'
           ) %>%
-          formatStyle(
-            '100% Full Date',
-            backgroundColor = styleInterval(lubridate::today(), c('red', 'transparent')),
-            color = styleInterval(lubridate::today(), c('white', 'black'))
-          ) %>% 
-          formatStyle(
-            'Prev. DL Error',
-            backgroundColor = styleEqual('Yes', 'yellow')
-          )
+          ... #More functions to style table cells elided for brevity
       )
 
 ```
 
-In this next chunk, a reactive value called `deploy_refresh` is initiated. When a row is selected, that value is updated, and the tab is updated. Within the deploy sensor tab, there is an argument called `collect`. The `return(list())` below contains values that are passed out of the collection calendar's server function. This list is passed to the deployment page via that argument `collect` , so that `selectInputs` can be updated and rows can be selected based on it. There is an `observeEvent` in Deploy Sensor for `collect$deploy_refresh`, so when that updates, it triggers the `updateSelectInput` and `selectRows` functions, which are given values like `collect$smp_id`. 
+### Step 3: Collection Calendar Server - Observe selectable output object's corresponding input value
 
-```{r eval = FALSE}
+The next step, also within Collection Calendar's server function, is to observe `input$collection_rows_selected` for changes. When a row is selected, that value is updated. This performs two actions: 
+
+1. Update a reactive value, `deploy_refresh`, that will instruct Deploy to update itself.
+2. Change the user's current selected tab to Deploy.
+
+Control flow in the server side of the Shiny app then returns to app.R. When it does, Collection Calendar returns a list of reactive values that will be passed into Deploy for the purposes of controlling Deploy when it refreshes. The list contains `deploy_refresh`, `input$collection_rows_selected`, and a variety of values from the selected row in `output$collection` [^1]
+
+[^1]: For reasons not relevant to this example, these values are accessed through another reactive variable, `rv$collect_table_filter()`, but they are originally from the table contained in `output$collection`.
+
+
+```{r collection_return, eval = FALSE}
 
       rv$deploy_refresh <- 0
       
@@ -154,7 +145,11 @@ In this next chunk, a reactive value called `deploy_refresh` is initiated. When 
 
 ```
 
-In app.R, you can see the server function calls, and how they are passed to each other. Other argument include custom functions, database connections, lookup tables, or universal variables.  For example, values returned from the function `collection_calendarServer` are given to `collection_cal`. This is reactive, so the values are continuously passed. In `deployServer`, `collection_cal` is assigned to the argument `collect`. Therefore, the returned values listed above can be called with `collect$foo`. 
+### Step 4: Global app.R Server - Pass Collection Calendar's output as input to Deploy
+
+In app.R, you can see the server function calls for each module. Each server function is assigned to a variable. Modules that can send the user to other modules accept the variable of those other modules as an argument. For example, both Deploy and Add OW can send the user to Collection Calendar, so Collection Calendar accepts both `ow` and `deploy` as arguments. 
+
+At the conclusion of the previous step, the return values from Collection Calendar are assigned to `collection_cal` in the global app.R server function. This value is then used as an input to `deployServer`, Deploy's server function. The values are assigned to the argument named `collect`. Therefore, in Deploy's server function, the outputs from Collection Calendar's server function can be referenced with `collect$foo`.
 
 ```{r eval = FALSE}
 
@@ -175,25 +170,71 @@ In app.R, you can see the server function calls, and how they are passed to each
                          sensor_issue_lookup = sensor_issue_lookup, newstyleEqual = newstyleEqual)
     #SRT
     srt <- SRTServer("srt", parent_session = session, poolConn = poolConn,
-                     srt_types = srt_types, con_phase = con_phase, sys_id = sys_id, special_char_replace = special_char_replace)
+                     srt_types = srt_types, con_phase = con_phase, sys_id = sys_id, 
+                     special_char_replace = special_char_replace)
     #Special Investigations
     special_investigations<- special_investigationsServer("special_investigations", parent_session = session,
                                         poolConn = poolConn, con_phase = con_phase, si_lookup = si_lookup,
-                                        requested_by_lookup = requested_by_lookup, sys_id = sys_id, special_char_replace = special_char_replace)
+                                        requested_by_lookup = requested_by_lookup, sys_id = sys_id, 
+                                        special_char_replace = special_char_replace)
     #History
     cwl_history <- cwl_historyServer("history", parent_session = session, poolConn = poolConn, deploy = deploy)
 
 
 ```
 
-Moving into the Deploy Sensor server function, the returned values from the collection calendar are in a list called `collect`. As noted, `collect$deploy_refresh` sets off certain updates in the `observeEvent`. Similar `observeEvent` functions exist in Deploy Sensor when coming from Special Investigation, SRT, Sensor, and Location modules. In Deploy Sensor, the SMP ID or Site Name is the foundational value. Tables and `selectInput` functions are based on the SMP ID or Site Name. So, they are first reset, and then a value is selected based on the `collect` list. Since `collect$deploy_refresh()` is initiated during the app load, the `observeEvent` will be triggered. That is why there is a length check; so it only follows through with this action if the SMP ID value actually exists. If it does, and then if the SMP ID is not blank, then it will be updated. If it is blank, the Site Name will be updated. Since those actions are not instant, a delay is placed before selecting a row in the accompanying datatable.  `collect$row` is the deployment_uid of the row selected in the collection calendar, and that is used to select the row in the deployment datatable. Selecting a row in the deployment datatable also pre-fills most sidebar fields for easy editing. More on that later. 
+### Step 5: Deploy Server - Checking reactive inputs and updating Deploy's input variables
+
+Control flow then passes to Deploy's server function. Deploy is initiated with three tables based on active, future, and previous deployments. These tables are invisible until an SMP ID or Site Name is selected, at which point they populate with the deployments at that site. The active deployment table query, through its visual output, is shown in the chunk below. 
 
 ```{r eval = FALSE}
+
+      #query for active deployments
+      active_table_query <- reactive(if(nchar(input$smp_id) > 0){
+        paste0(
+        "SELECT * FROM fieldwork.active_deployments
+            WHERE smp_id = ", rv$smp_id(), " ORDER BY deployment_dtime_est")
+      }else{
+        paste0(
+          "SELECT * FROM fieldwork.active_deployments
+            WHERE site_name = '", input$site_name, "' ORDER BY deployment_dtime_est")
+      })
+      
+      #create table as a reactive value based on query
+      rv$active_table_db <- reactive(odbc::dbGetQuery(poolConn, active_table_query())%>% 
+                                       mutate(across("download_error", 
+                                                 ~ case_when(. == 1 ~ "Yes", 
+                                                                . == 0 ~ "No"))))
+      
+      #select columns to show in app, and rename
+      rv$active_table <- reactive(rv$active_table_db() %>% ...)
+      #visual modifications elided for brevity
+      
+      #render Datatable
+      output$current_deployment <- renderDT(
+        rv$active_table(),
+        selection = "single",
+        style = 'bootstrap', 
+        class = 'table-responsive, table-condensed',
+        options = list(dom = 'tp')
+      )
+      
+```
+
+The Deploy server function contains several `observeEvent` calls that check each of its module communication input variables (i.e. `collect` from Collection Calendar, `ow` from Add OW, etc) for the changes to the `deploy_refresh` value. If that value has changed, Deploy knows that the variable's source module was the one that passed control flow to Deploy, and, as such, has data for Deploy to read. Deploy reads this data and populates it into Deploy's input fields. The code block below contains Collection Calendar's corresponding `observeEvent`. 
+
+Finally, it's time for Deploy to display the data. In Deploy, the SMP ID or Site Name is the foundational value. Tables and `selectInput` functions are based on the SMP ID or Site Name. They are first reset to purge any existing selections. Then, a value is selected from the `collect` list. The length check helps Deploy know whether the data it's reading has an SMP ID or Site Name as its foundation. This causes Deploy's corresponding datatable output object (not depicted here), to update based on the new foundational value. That is to say, now that Deploy knows which SMP/Site has been selected, it can populate its datatable (process shown above) with the deployments from that location.
+
+Since that table update requires a filter operation, which takes time, a delay is used to allow that filter to complete before selecting a row in Deploy's datatable output. `collect$row` is the deployment_uid of the row selected in Collection Calendar, and that is used to select the row in Deploy's datatable. Selecting a row in the deployment datatable also pre-fills most sidebar fields for easy editing.
+
+```{r eval = FALSE}
+
       #upon clicking a row in collection_calendar
       observeEvent(collect$deploy_refresh(), {
         updateSelectizeInput(session, "smp_id", selected = character(0))
         updateSelectInput(session, "site_name", selected = "")
-        # need to get through the initial load where length == 0 for collection calendar smp_id (is.na does not work in that case)
+        # need to get through the initial load where length == 0 for collection calendar smp_id 
+          #(is.na does not work in that case)
         # go to either smp id or site name
         if(length(collect$smp_id()) > 0){
           if(!is.na(collect$smp_id())){
@@ -202,11 +243,55 @@ Moving into the Deploy Sensor server function, the returned values from the coll
           updateSelectInput(session, "site_name", selected = collect$site_name())
           }
           #delay so that the selectizeInput is updated and table is queried before it is searched by R
+          #this is where the above chunk reaction is happening
           delay(250,{
-                  rv$active_row <- reactive(which(rv$active_table_db()$deployment_uid == collect$row(), arr.ind = TRUE))
+                  rv$active_row <- reactive(which(rv$active_table_db()$deployment_uid == collect$row(), 
+                                                  arr.ind = TRUE))
                   dataTableProxy('current_deployment') %>% selectRows(rv$active_row())
                 })
         }
       })
       
 ```
+
+### Step 6: Deploy Server - Updating Input Selections Based on Selected Row
+
+Selecting a row in the Active Deployments table indicates the need to either edit or access more information about that deployment. The future and previous deployments tables work similarly. Clicking a row in the collection calendar leads to this step, but users can also manually go to Deploy Sensor, select an SMP ID or Site Name, and select a row. 
+
+When a row is selected, that row's position within the datatable is identified, which is used to reference the row's position and related attributes in the "_db" table. Additionally, rows in other tables are deselected. Since these row selections are referenced so much, a shorthand was created. Then, a reactive value is updated based on the selected row. When this reactive value changes, an `updateSelectInput` is triggered with an `observe`. 
+
+```{r eval = FALSE}
+
+#when a row in active deployments table is clicked
+observeEvent(input$current_deployment_rows_selected, {
+  #deselect from other tables
+  dataTableProxy('prev_deployment') %>% selectRows(NULL)
+  dataTableProxy('future_deployment') %>% selectRows(NULL)
+})
+
+#shorten name of selected rows from active and prev deployments tables
+      rv$active <- reactive(input$current_deployment_rows_selected) 
+      rv$prev   <- reactive(input$prev_deployment_rows_selected)
+      rv$future <- reactive(input$future_deployment_rows_selected)
+      
+      #update sensor id 
+      #find which table has a row selected 
+      #then update reactive value definition based on that
+      rv$sensor_id <- reactive(if(length(rv$active()) > 0){
+        rv$active_table_db()$sensor_serial[rv$active()] 
+      }else if(length(rv$prev()) > 0){
+        rv$old_table_db()$sensor_serial[rv$prev()]
+      }else if(length(rv$future()) > 0){
+        rv$future_table_db()$sensor_serial[rv$future()]
+      })
+      
+      ...#more updates elided for brevity
+      
+      #update inputs based on the reactive value definitions above
+      observe({
+        updateSelectInput(session, "sensor_id", selected = rv$sensor_id())
+        ...# more updates elided for brevity
+      })
+
+```
+

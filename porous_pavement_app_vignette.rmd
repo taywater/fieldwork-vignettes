@@ -1,0 +1,98 @@
+---
+title: "Porous Pavement App"
+author: "Nicholas Manna"
+date: "8/16/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The Porous Pavement app has evolved from a place of record-keeping and entry to the central hub for porous pavement records, results, and preliminary evaluation. The user can input future tests and, once the test is complete, edit the record to be a completed test with results, including guided calculations. Users can also view and download aggregated data. 
+
+The steps enumerated below will reference Core Principles from the Core Principles vignette. This vignette goes into greater detail on these principles. 
+
+## Mechanics
+
+The app is built in one module and the app.R file (Core Principle #1). The app is set up with a user interface and server, following basic Shiny principles. The UI consists of four tabs, including "Add/Edit", "View Completed Tests", "View Future Tests", and "View Averages". 
+
+All tabs follow Core Principle #2, where a view is pulled from the database, manipulated for the app, and displayed. 
+
+The "Add/Edit" page follows Core Principles #3, #4, #5, and #6. Selecting an SMP ID brings up two tables with future and completed tests (#5). Clicking a row in the table allows the user to edit or view more data (#3). 
+
+The user can add test location, ring diameter, and prewet time. Prewet time serves as another root; if it ten minutes or greater, infiltration tests are not completed and rate is based on prewet time. If prewet time is below a threshold, mass of water is auto-selected based on the SOP, and then the user can input test times. Infiltration rate will then be based on the test time. 
+
+Some of these conditions coded in the UI with `shinyjs::conditionalPanel()` functions (shown below). 
+
+```{r eval = FALSE}
+
+sidebarPanel(selectizeInput(ns("smp_id"), future_req(html_req("SMP ID")), choices = NULL, 
+                                                  options = list(
+                                                    placeholder = 'Select an Option',
+                                                    onInitialize = I('function() { this.setValue(""); }')
+                                                  )), 
+                                   ...
+                                   #other inputs elided for brevity
+  fluidRow(column(6, selectInput(ns("ring_dia"), "Ring Diameter (in)", 
+                                 choices = c("","9.75", "11.625"), selected = NULL)),
+           column(6, numericInput(ns("prewet_time"), "Prewet Time (sec)", value = NA, min = 0))), 
+  conditionalPanel(condition = "input.prewet_time > 599", ns = ns, 
+                   disabled(numericInput(ns("pw_rate"), "Rate (in/hr) based on Prewet Time", 
+                                         value = NA, min = 0))),
+  conditionalPanel(condition = "input.prewet_time < 599", ns = ns, 
+                   selectInput(ns("weight"), "Mass of Water (lb)", 
+                               choices = c("", 8.34, 41.7), selected = NULL),
+                    fluidRow(column(6, numericInput(ns("time_one"), "T1 Time (sec)", value = NA, min = 0)),
+                             column(6, disabled(numericInput(ns("rate_one"), "T1 Rate (in/hr)", 
+                                                             value = NA, min = 0)))),
+                    fluidRow(column(6, numericInput(ns("time_two"), "T2 Time (sec)", value = NA, min = 0)),
+                             column(6, disabled(numericInput(ns("rate_two"), "T2 Rate (in/hr)", 
+                                                             value = NA, min = 0))))),
+                                   ...
+)
+
+```
+
+Some of the conditionals are written into the server function (below); reactive values are created based on the similar conditions that determine whether the fields they are placed in are displayed. 
+
+```{r eval = FALSE}
+
+#calculate infiltration rate
+#I = (KM)/(D^2*t)
+k <- 126870
+#D = ring diameter (in)
+#M = 8.34 lbs - 1 gal of water 
+m <- 8.34
+#t = prewet time
+#infiltration rate based on prewet time
+rv$pw_rate_inhr <- reactive(if(length(input$ring_dia) > 0 & !is.na(input$prewet_time)){
+                            if(input$prewet_time > 599 & input$prewet_time <= 3600){
+  round(((k*m)/((as.numeric(input$ring_dia)^2)*input$prewet_time)),1)
+                            }else{
+  NA
+}
+  })
+
+observe(updateNumericInput(session = session, "pw_rate", value = rv$pw_rate_inhr()))
+
+#infiltration rate based on tests ONE
+rv$rate_inhr_one <- reactive(if(length(input$weight) > 0 & !is.na(input$time_one)){
+  round(((k*as.numeric(input$weight))/((as.numeric(input$ring_dia)^2)*input$time_one)),1)
+})
+
+observe(updateNumericInput(session = session, "rate_one", value = rv$rate_inhr_one()))
+
+#infiltration rate based on tests TWO
+rv$rate_inhr_two <- reactive(if(length(input$weight) > 0 & !is.na(input$time_two)){
+  round(((k*as.numeric(input$weight))/((as.numeric(input$ring_dia)^2)*input$time_two)),1)
+})
+
+observe(updateNumericInput(session = session, "rate_two", value = rv$rate_inhr_two())) 
+      
+```
+
+Following CP #4, users can then write to or edit the database. 
+
