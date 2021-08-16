@@ -1,7 +1,7 @@
 ---
 title: "Fieldwork App Core Principles"
 author: "Nicholas Manna"
-date: "7/1/2021"
+date: "8/16/2021"
 output: html_document
 ---
 
@@ -34,11 +34,7 @@ It gives an overview of the back-end and the reactive interactions between user-
 
 The Fieldwork App is composed of modules. The modules represent individual pages or components of the overarching app. App.R brings these components of the app together; calls to `source()` bring the UI and server functions of each constituent module into app.R to be executed. Modules provide a host of benefits for the app's development process. Since modules are self-contained environments, variable names can be re-used between them. Breaking the app into modules also makes expansion, or separation, of the apps much easier since files can be added or removed with minimal adjustments in app.R. 
 
-When modules' source files are brought into app.R, the module functions get called. The modules' UI functions are called within app.R's UI function; likewise their server functions are called within app.R's server function. Global variables can be queried and set in the app.R UI and server functions and passed to modules called there. 
-
-%%%Taylor: These two sentences are unclear - it sounds like there is a difference between the way the app treats globals that are instantiated in the global UI/Server and those instantiated in App.R but not inside those functions. Can you elaborate more on how it treats them differently, perhaps with examples?%%%
-
-These variables are initiated in the functions so they are checked every time the app is loaded. However, libraries, global options, database connections, and file sourcing can be set in the main body of app.R. 
+When modules' source files are brought into app.R, the module functions get called. The modules' UI functions are called within app.R's UI function; likewise their server functions are called within app.R's server function. Global variables can be queried and set in the app.R UI and server functions and passed to modules called there. These variables that are set within the UI and server functions and then passed to modules are checked every time the app is loaded. For example, this is necessary for lookup tables because those can change on the database side. Because variables are set within these functions, they sometimes may need to be defined twice; once within server, and once within UI.  Libraries, global options, database connections, and file sourcing can be set in the main body of app.R. These values will be read and set once when the app is deployed, since they are outside of the server or UI functions. 
 
 Modules are given distinct namespaces to facilitate the reusability of variable names. These namespaces are created with the function `NS()`, which returns a function that silently modifies variable names within the Shiny environment. The function is instantiated like `ns <- NS(id)`, where `id` is the name of your module. Each input or output for that module must be wrapped in `ns()` to appropriately assign it to the namespace. Creating a module's server function involves calling `moduleServer()`, and `ns` must be called within `moduleServer()`. `moduleServer()` and `ns` work in concert to define and name the environment for the module's code execution.
 
@@ -108,7 +104,7 @@ output$srt_table <- renderDT(
                                  
  
 
-### Core Principle #4: Editing and Pre-populating Inputs
+### Core Principle #3: Editing and Pre-populating Inputs
  
 Selecting a row in a site table indicates the need to access more information or edit that row. The Fieldwork App will respond to this indication by modifying the app UI in response to that user's action. When a row is selected, that row's position within the datatable is identified, which is used to reference the row's position and related attributes in the "_db" table. Additionally, rows in other tables are deselected.
 
@@ -128,7 +124,7 @@ observeEvent(input$srt_table_rows_selected,{
 
 ```
  
-### Core Principle #5: Writing to and Editing the Database
+### Core Principle #4: Writing to and Editing the Database
 
 Adding rows to the database, and editing those rows, is triggered by a button click. Different buttons are available for future or completed tests (see CP #3), and different labels are applied based on whether a row is selected. A reactive value for the label is then applied within an `observe`. This conditional is also included within the `observeEvent` for the button click. 
 
@@ -209,14 +205,11 @@ observeEvent(input$add_srt, {
 
 ```
 
-### Core Principle #N: Root Values and UI Malleability
+### Core Principle #5: Root Values and UI Malleability
 
-%%%Taylor: This section is extremely dense. You're describing how modules work from a root value that controls the capabilities/actions of the app depending on the context, but you're not leading with that. I think this would work better as the final core principle, as it draws on a number of others. I will take a stab at writing a stripped-down version of this as a new, final principle.%%%
-
-Each tab has a most-important data variable. These variables, called "root values", have substantial effects on the behavior of the tab. For example, Deploy Sensor is controlled at the root by either the SMP ID field or the Site Name field. When a root value is selected (for example, an SMP ID), the app can query the database and enable/disable UI controls based on the chosen value. It could, for example, show all current/previous deployments at the chosen SMP. It could also enable, disable, or change certain UI elements based on the user's selection. In accordance with CP #4, it could also prepopulate certain UI elements.
+Each tab has a most-important data variable. These variables, called "root values", have substantial effects on the behavior of the tab. For example, Deploy Sensor is controlled at the root by either the SMP ID field or the Site Name field. When a root value is selected (for example, an SMP ID), the app can query the database and enable/disable UI controls based on the chosen value. It could, for example, show all current/previous deployments at the chosen SMP. It could also enable, disable, or change certain UI elements based on the user's selection. In accordance with CP #3, it could also prepopulate certain UI elements.
 
 Other variables can also control app behavior in this way, but each app's root value controls it most of all. Date fields can tell the app whether a record is a past test or future test, and change app behavior accordingly.
-
 
 ``` {r eval = FALSE}
 #toggle state for metadata depending on whether a test date is included
@@ -235,9 +228,9 @@ observe(toggleState(id = "future_srt", condition = nchar(input$system_id) > 0))
 
 ```
 
-###Core Principle N+1: Main Tables and Site Tables
+### Core Principle 6: Main Tables and Site Tables
 
-Modules that are composed of several tabs often have tables that show broad expanses of data, and narrow subsets of data (filtered by a root value, in accordance with CP #N). These tables can be considered "main" tables and, because root values often target single sites, "site" tables.
+Modules that are composed of several tabs often have tables that show broad expanses of data, and narrow subsets of data (filtered by a root value, in accordance with CP #5). These tables can be considered "main" tables and, because root values often target single sites, "site" tables.
 
 Main tables give an overview of an entire dataset. For example, all completed or future SRTs, regardless of which sites they are associated with, would be considered a main table. In accordance with CP #2, they are queried from database views, minimally modified, and are filtered to produce site tables when certain conditions are met. Values from these site tables (for example, a single selected test record), can be prepopulated into the UI in accordance with CP#4
 
